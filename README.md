@@ -1,6 +1,8 @@
 # servant-demo
 
-A simple demo of the [Servant Library](https://github.com/MarcoPolo/Servant)
+A more complex demo of the [Servant Library](https://github.com/MarcoPolo/Servant).
+This project spawns several workers, and uses them to parallelize data {en,de}cryption, 
+a computationally heavy operation.
 
 ## Usage
 
