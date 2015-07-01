@@ -121,7 +121,6 @@
   (let [[_ chunk-sizes _ _] (read-tags-password-iv)
         blobs (map (fn [[start end]] (.slice file start end))
                    (partition 2 1 (reductions + (cons 0 chunk-sizes))))]
-    (js* "debugger")
     (go blobs)))
 
 (defn split-plaintext-into-blobs [file]
