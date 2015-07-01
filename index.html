@@ -6,10 +6,10 @@
     <p> Look in the console </p>
 
     <label for="filePicker">Plaintext File</label>
-    <input id="filePicker" type="file"></input> 
+    <input id="filePicker" type="file"></input>
 
     <label for="fileDecrypt">Encrypted File</label>
-    <input id="fileDecrypt" type="file"></input> 
+    <input id="fileDecrypt" type="file"></input>
 
     <div>
       <a id="downloadLink">Download</a>
@@ -17,13 +17,13 @@
 
     <div>
       <label for="password">Passkey (a secure passkey will be generated for you, use it to decrypt a file)</label>
-      <input id="password" type="text" value=""></input> 
+      <input id="password" type="text" value=""></input>
     </div>
 
     <div>
       <p>
         This is toy example, it encrypts and decrypts files, but it doesn't properly store the tag information
-        (meaning you cannot accurately authenitcate the data), nor does it account for padding, nor does it preserve metadata. 
+        (meaning you cannot accurately authenitcate the data), nor does it account for padding, nor does it preserve metadata.
         If you want all that check out:
         <a href="http://cryptic.io">cryptic.io</a>
       </p>
@@ -31,8 +31,8 @@
         The main purpose behind this is to demonstrate the power of the Servant Library. It's pretty sweet!
       </p>
     </div>
-    
+
   </body>
-  <script src="sjcl.js" ></script>
-  <script src="main.js" ></script>
+  <script src="./sjcl.js" ></script>
+  <script src="./main.js" ></script>
 </html>
