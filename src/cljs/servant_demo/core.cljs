@@ -15,7 +15,7 @@
 
 ;; How many webworks would you like today?
 (def worker-count 4)
-(def worker-script "/main.js") ;; This is whatever the name of this script will be
+(def worker-script "./main.js") ;; This is whatever the name of this script will be
 (def chunk-size 200000)
 
 
