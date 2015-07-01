@@ -1,9 +1,9 @@
-;; Note: Do not let the size of this file shock you, 
+;; Note: Do not let the size of this file shock you,
 ;; It's big because of all the crap you have to do to get a File Object
 ;; into blobs into arraybuffers into blobs again into the filesystem api
 ;; so that you can create a download link. (And then again for decrypting)
 (ns servant-demo.demo
-  (:require 
+  (:require
             [cljs.core.async :refer [chan close! timeout put! take!]]
             [cljs.reader :as reader]
             [servant.core :as servant]
@@ -16,7 +16,7 @@
 ;; How many webworks would you like today?
 (def worker-count 4)
 (def worker-script "/main.js") ;; This is whatever the name of this script will be
-(def chunk-size 20000)
+(def chunk-size 200000)
 
 
 (defn concat-arraybuffer [ab1 ab2]
@@ -27,38 +27,47 @@
         d1 (js/DataView. ab1)
         d2 (js/DataView. ab2)
         new-d (js/DataView. new-ab) ]
-    (doseq [x (range 0 ab1-length)] 
+    (doseq [x (range 0 ab1-length)]
       (.setUint8 new-d x (.getUint8 d1 x)))
     (doseq [x (range 0 ab2-length) :let [new-d-index (+ x ab1-length)]]
-      (.setUint8 new-d new-d-index (.getUint8 d1 x)))
+      (.setUint8 new-d new-d-index (.getUint8 d2 x)))
     new-ab))
 
-(defn create-padding-arraybuffer [padding-count]
+(defn create-padding-arraybuffer [padding-count filler]
   (let [new-ab (js/ArrayBuffer. padding-count)
         d (js/DataView. new-ab)]
     (doseq [x (range padding-count)]
-      (.setUint8 d x padding-count))
+      (.setUint8 d x filler))
     new-ab))
 
 (defn pad-arraybuffer [arraybuffer]
   (let [remainder (mod (aget arraybuffer "byteLength") 16)]
     (if (= 0 remainder)
-      arraybuffer
-      (concat-arraybuffer arraybuffer (create-padding-arraybuffer (- 16 remainder))))))
+      (concat-arraybuffer arraybuffer (create-padding-arraybuffer 16 remainder))
+      (concat-arraybuffer arraybuffer
+        (concat-arraybuffer
+          (create-padding-arraybuffer (- 16 remainder) 0)
+          (create-padding-arraybuffer 16 remainder))))))
 
+(defn remove-padding [arraybuffer]
+  (let [arraybuffer-size (aget arraybuffer "byteLength")
+        d (js/DataView. arraybuffer)
+        padding (.getUint8 d (dec arraybuffer-size))]
+
+    (.slice arraybuffer 0 (- arraybuffer-size (+ 16 padding)))))
 
 ;;These are the underlying functions for cryptography
 (defn encrypt-arraybuffer [password iv arraybuffer]
-  (let [ aes (js/sjcl.cipher.aes. password) 
+  (let [ aes (js/sjcl.cipher.aes. password)
          arraybuffer (pad-arraybuffer arraybuffer)]
     (.encrypt js/sjcl.arrayBuffer.ccm
-       aes arraybuffer iv))) 
+       aes arraybuffer iv)))
 
 (defn decrypt-arraybuffer [password iv tag arraybuffer]
-  (let [ aes (js/sjcl.cipher.aes. password) 
-         arraybuffer (pad-arraybuffer arraybuffer)]
-    (.decrypt js/sjcl.arrayBuffer.ccm
-       aes arraybuffer iv tag))) 
+  (let [ aes (js/sjcl.cipher.aes. password)
+         decrypted-buffer (.decrypt js/sjcl.arrayBuffer.ccm
+                            aes arraybuffer iv tag)]
+    (remove-padding decrypted-buffer)))
 
 ;; Here we put out servantfn wrapper around the raw crypto fns
 ;; Notice how we return a vector of two items:
@@ -76,13 +85,13 @@
 ;; This function is interesting, because we have a whole bunch of arraybuffers, and our servant-fn
 ;; We map through them creating a lazy seq of channels that will hold the value of the encrypted
 ;; arraybuffers. We loop through each one in sequence and add them to a ciphertexts seq
-(defn encrypt-arraybuffers 
+(defn encrypt-arraybuffers
   "Given a seq of arraybuffers lets encrypt them all"
   [arraybuffers encrypt-servant-fn password iv]
   (let [ servant-channels (map #(encrypt-servant-fn [password iv %] [%]) arraybuffers)
          ciphertexts-channel (chan)]
-    (go 
-      (loop [servant-channels servant-channels    
+    (go
+      (loop [servant-channels servant-channels
              ciphertexts []]
         (if (seq servant-channels)
           (recur (rest servant-channels)
@@ -91,14 +100,13 @@
     ciphertexts-channel))
 
 ;; Here we do the same thing, but we need to include tags, since we are using CCM encryption
-(defn decrypt-arraybuffers 
-  "Given a seq of arraybuffers lets encrypt them all"
+(defn decrypt-arraybuffers
+  "Given a seq of arraybuffers lets decrypt them all"
   [arraybuffers decrypt-servant-fn tags password iv]
   (let [ servant-channels (map #(decrypt-servant-fn [password iv %1 %2 ] [%2]) tags arraybuffers)
          plaintexts-channel (chan) ]
-    (def k [arraybuffers tags])
-    (go 
-      (loop [servant-channels servant-channels    
+    (go
+      (loop [servant-channels servant-channels
              plaintexts []]
         (if (seq servant-channels)
           (recur (rest servant-channels)
@@ -110,26 +118,34 @@
 ;; Boring functions that deal with the hoops I need to jump through
 
 (defn split-file-into-blobs [file]
+  (let [[_ chunk-sizes _ _] (read-tags-password-iv)
+        blobs (map (fn [[start end]] (.slice file start end))
+                   (partition 2 1 (reductions + (cons 0 chunk-sizes))))]
+    (js* "debugger")
+    (go blobs)))
+
+(defn split-plaintext-into-blobs [file]
   (let [blob-channel (chan)]
-    (go 
+    (go
       (>! blob-channel
-        (map 
+        (map
           #(.slice file % (+ chunk-size %))
           (range 0 (aget file "size") chunk-size))))
     blob-channel))
+
 
 (defn get-arraybuffers-from-blobs [blobs]
   ;; When we got the file blobs, we need to get their respective arraybuffers
   (let [file-reader (js/FileReader.)
         arraybuffer-channel (chan)
         all-arraybuffers-chan (chan)]
-    (set! (.-onload file-reader) 
-          #(go 
+    (set! (.-onload file-reader)
+          #(go
              (>! arraybuffer-channel (aget file-reader "result"))))
-    (go 
+    (go
       (loop [blobs blobs arraybuffers []]
         (if (seq blobs)
-          (do 
+          (do
             (.readAsArrayBuffer file-reader (first blobs))
             (recur (rest blobs)
                    (conj arraybuffers (<! arraybuffer-channel))))
@@ -142,33 +158,34 @@
           #(go (>! file-channel (aget (.-files (.-target %)) "0"))))
     file-channel))
 
-(defn write-ciphertexts 
+(defn write-ciphertexts
   "Writes the ciphertexts to a file, returns the tags"
   [ciphertexts]
-  (let [ blobs (map #(js/Blob. (array (aget % "ciphertext_buffer"))) ciphertexts)
-        tags (js->clj (map #(aget % "tag") ciphertexts)) ]
-    (go 
+  (let [blobs (map #(js/Blob. (array (aget % "ciphertext_buffer"))) ciphertexts)
+        tags (js->clj (map #(aget % "tag") ciphertexts))
+        chunk-sizes (map #(aget (aget % "ciphertext_buffer") "byteLength") ciphertexts)]
+    (go
       (aset (.getElementById js/document "downloadLink") "href"  (<! (filesystem/write-blobs-to-file "encrypted.blob" blobs))))
-    tags))
+    [tags chunk-sizes]))
 
-(defn write-plaintexts 
+(defn write-plaintexts
   "Writes the ciphertexts to a file, returns the tags"
   [plaintexts]
   (let [ blobs (map #(js/Blob. (array %)) plaintexts)]
     (println "Writing plaintext to the file!")
-    (go 
+    (go
       (aset (.getElementById js/document "downloadLink") "href"  (<! (filesystem/write-blobs-to-file "pt.blob" blobs))))))
 
 
 ;; To set the passcode in the little box
-(defn save-tags-password-iv [tags password iv]
+(defn save-tags-password-iv [[tags chunk-sizes] password iv]
   (set!
     (.-value (.getElementById js/document "password"))
-    (js/btoa (pr-str (js->clj [tags password iv])))))
+    (js/btoa (pr-str (js->clj [tags chunk-sizes password iv])))))
 
 ;; To Read the passcode from the box
 (defn read-tags-password-iv []
-  (reader/read-string 
+  (reader/read-string
     (js/atob
       (.-value (.getElementById js/document "password")))))
 
@@ -180,11 +197,11 @@
     ;; To encrypt the files
     (go->
       (read-file-from-dom "filePicker")
-      (<!-and-apply split-file-into-blobs)
+      (<!-and-apply split-plaintext-into-blobs)
       (<!-and-apply get-arraybuffers-from-blobs)
-      ;; This is where we make the servant call. We pass a partial function so 
-      ;; this function doesn't have to worry about the servant-channel 
-      (<!-and-apply encrypt-arraybuffers [encrypt-servant-fn password iv]) 
+      ;; This is where we make the servant call. We pass a partial function so
+      ;; this function doesn't have to worry about the servant-channel
+      (<!-and-apply encrypt-arraybuffers [encrypt-servant-fn password iv])
       (<!-and-apply write-ciphertexts)
       (save-tags-password-iv password iv)
       ((fn [_] (go (>! done-chan true)))))
@@ -197,11 +214,13 @@
       (read-file-from-dom "fileDecrypt")
       (<!-and-apply split-file-into-blobs)
       (<!-and-apply get-arraybuffers-from-blobs)
-      ;; This is where we make the servant call. We pass a partial function so 
-      ;; this function doesn't have to worry about the servant-channel 
-      (#(go 
+      ;; This is where we make the servant call. We pass a partial function so
+      ;; this function doesn't have to worry about the servant-channel
+      (#(go
          (let [ arraybuffers (<! %)
-                [tags password iv] (read-tags-password-iv) 
+                [tags chunk-sizes password iv] (read-tags-password-iv)
+                ;; Uncomment to not use webworkers
+                #_#_ plaintexts (doall (map (fn [t a] (decrypt-arraybuffer (clj->js password) (clj->js iv) (clj->js t) a)) tags arraybuffers))
                 plaintexts (<! (decrypt-arraybuffers arraybuffers decrypt-servant-fn tags password iv)) ]
            (write-plaintexts plaintexts))))
       ((fn [_] (go (>! done-chan true)))))
@@ -227,12 +246,12 @@
   (go
     (loop []
       (<! (encrypt-workflow encrypt-servant-fn password iv))
-      (recur))) 
+      (recur)))
 
   (go
     (loop []
       (<! (decrypt-workflow decrypt-servant-fn))
-      (recur))) 
+      (recur)))
 
 
 )

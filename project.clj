@@ -16,5 +16,4 @@
                  :compiler {:optimizations :whitespace
                             :pretty-print false
                             :externs ["sjcl.js"]
-                            :output-to "main.js" 
-                            :source-map "main.js.map"}}]})
+                            :output-to "main.js"}}]})
